@@ -1,2 +1,3 @@
 # plant-monitor
-Arduino based plant health monitor
+Arduino Leonardo based plant health monitor.
+*version: 0.1*
