@@ -9,6 +9,7 @@
 #define csPin 4
 #define dhtPin 5
 #define interruptPin 7
+#define errorPin 13
 #define photoresistorPin A0
 #define thermistorPin A1
 #define soilMoisturePin A2
@@ -24,18 +25,20 @@
 
 #define thermistorSamples 5
 volatile int rollState = 1;
-int thermistorSampleReadings[thermistorSamples];
-long logId = 1;
-static unsigned long lastLogRecordTime = 0;
+float thermistorSampleReadings[thermistorSamples];
+unsigned long logId = 1;
+unsigned long lastLogRecordTime = 0;
 
 // Objects
 
 LiquidCrystal_I2C lcd(0x3F, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
 dht DHT;
+File logFile;
 
 void setup() {
   pinMode(interruptPin, INPUT);
   pinMode(csPin, OUTPUT);
+  pinMode(errorPin, OUTPUT);
 
   analogReference(EXTERNAL);
 
@@ -46,24 +49,23 @@ void setup() {
   // SD Card initialization
 
   if (!SD.begin(csPin)) {
-    lcd.setCursor(0, 0);
-    lcd.print("SD Card Failure");
-    delay(5000);
+    digitalWrite(errorPin, HIGH);
     return;
   }
 
-  lcd.setCursor(0, 0);
-  lcd.print("SD Card is Ready");
-
   // Header for Log file
 
-  File logFile = SD.open ("log.csv", FILE_WRITE);
+  logFile = SD.open ("log.csv", FILE_WRITE);
+
   if (logFile) {
-    logFile.println(" , , , , , ");
-    String header = "ID, Temperature (Celsius), Humudity (%), Lighting (lx), Thermistor (Celsius), Soil Moisture";
+    char headerBreak[12] = " , , , , , ";
+    logFile.println(headerBreak);
+    char header[102] = "ID, Temperature (Celsius), Humudity (%), Lighting (lx), Thermistor (Celsius), Soil Moisture";
     logFile.println(header);
     logFile.close();
   }
+
+  Serial.begin(9600);
 }
 
 void loop() {
@@ -71,36 +73,38 @@ void loop() {
   // Reads DHT sensor and stores values in respective variables
 
   int dhtStatus = DHT.read11(dhtPin);
-  float dhtTemperature = DHT.temperature;
-  float dhtHumidity = DHT.humidity;
+  int dhtTemperature = DHT.temperature;
+  int dhtHumidity = DHT.humidity;
 
   // Illuminance calculation (it is rather inaccurate as, for example, the voltage can fluctuate
 
   int photoresistorReading = analogRead(photoresistorPin);
   float vout = photoresistorReading * 0.00322265625; // 3.3 V / 1024 = 0.00322265625
-  float lux = 500 / (10 * ((3.3 - vout) / vout));
+  float luxValue = 500 / (10 * ((3.3 - vout) / vout));
+  int lux = (int)round(luxValue);
 
-  String lightCondition;
+  char lightCondition[12] = "";
 
   if (lux < 10) {
-    lightCondition = "pitch black";
+    strcpy(lightCondition, "pitch black");
   } else if (lux < 50) {
-    lightCondition = "very dark";
+    strcpy(lightCondition, "very dark");
   } else if (lux < 200) {
-    lightCondition = "dark in";
+    strcpy(lightCondition, "dark in");
   } else if (lux < 400) {
-    lightCondition = "dim in";
+    strcpy(lightCondition, "dim in");
   } else if (lux < 1000) {
-    lightCondition = "normal in";
+    strcpy(lightCondition, "normal in");
   } else if (lux < 5000) {
-    lightCondition = "bright in";
+    strcpy(lightCondition, "bright in");
   } else if (lux < 10000) {
-    lightCondition = "dim out";
+    strcpy(lightCondition, "dim out");
   } else if (lux < 30000) {
-    lightCondition = "cloudy out";
+    strcpy(lightCondition, "cloudy out");
   } else {
-    lightCondition = "direct sun";
+    strcpy(lightCondition, "direct sun");
   }
+
 
   // Reads thermistor multiples times for accuracy and calculates the average result
 
@@ -135,20 +139,29 @@ void loop() {
 
   int moistureReading = analogRead(soilMoisturePin);
 
-  // Logs data to SD card
+  // Logs data on SD card
 
-  long upTime = millis();
+  unsigned long upTime = millis();
 
   if (upTime - lastLogRecordTime > 1000) {
-    String logData = String(logId) + "," + String(dhtTemperature) + "," + String(dhtHumidity) + "," + String(lux) + "," + String(steinhart) + "," + String(moistureReading);
-    File logFile = SD.open("log.csv", FILE_WRITE);
+    char logData[40];
+
+    // Float to string coversation (it has rounding error on second digit after the decimal point +/- 1)
+
+    int steinhartWhole = steinhart;
+    int steinhartFraction = (steinhart - steinhartWhole) * 100;
+    char steinhartFull[5];
+    sprintf(steinhartFull, "%d.%d", steinhartWhole, steinhartFraction);
+
+    sprintf(logData, "%lu, %d, %d, %d, %s, %d", logId, dhtTemperature, dhtHumidity, lux, steinhartFull, moistureReading);
+
+    logFile = SD.open("log.csv", FILE_WRITE);
 
     if (logFile) {
       logFile.println(logData);
       logFile.close();
     } else {
-      lcd.setCursor(0, 0);
-      lcd.print("SD Card Failure");
+      digitalWrite(errorPin, HIGH);
     }
 
     logId++;
@@ -205,20 +218,20 @@ int changeRollSate() {
 
 // Function that displays DHT temperature and humidity on LCD
 
-void displayDhtReading(int dhtStatus, float dhtTemperature, float dhtHumidity) {
+void displayDhtReading(int dhtStatus, int dhtTemperature, int dhtHumidity) {
 
   switch (dhtStatus) {
     case DHTLIB_OK:
       lcd.setCursor(0, 0);
       lcd.print("Temp: ");
-      lcd.print(dhtTemperature, 1);
+      lcd.print(dhtTemperature);
       lcd.print(" ");
       lcd.print((char)223);
-      lcd.print("C    ");
+      lcd.print("C      ");
       lcd.setCursor(0, 1);
       lcd.print("Hum: ");
-      lcd.print(dhtHumidity, 1);
-      lcd.print(" %     ");
+      lcd.print(dhtHumidity);
+      lcd.print(" %       ");
       break;
     case DHTLIB_ERROR_CHECKSUM:
       lcd.setCursor(0, 0);
