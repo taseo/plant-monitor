@@ -17,17 +17,23 @@
 // Coefficients for calculations
 
 #define thermistorSeries 3950
-#define bcoefficient 3950
+#define bCoefficient 3950
 #define temperatureNormal 25
 #define thermistorNominal 3950
 
 // Global variables
 
+int dhtStatus;
+int dhtTemperature;
+int dhtHumidity;
 #define thermistorSamples 5
 volatile int rollState = 1;
 float thermistorSampleReadings[thermistorSamples];
 unsigned long logId = 1;
+unsigned long lastdhtAccess = 0;
 unsigned long lastLogRecordTime = 0;
+char clearLCD[17] = "                ";
+char dhtError[17];
 
 // Objects
 
@@ -64,17 +70,20 @@ void setup() {
     logFile.println(header);
     logFile.close();
   }
-
-  Serial.begin(9600);
 }
 
 void loop() {
 
+  unsigned long upTime = millis();
+
   // Reads DHT sensor and stores values in respective variables
 
-  int dhtStatus = DHT.read11(dhtPin);
-  int dhtTemperature = DHT.temperature;
-  int dhtHumidity = DHT.humidity;
+  if (upTime - lastdhtAccess > 1000) {
+    dhtStatus = DHT.read11(dhtPin);
+    dhtTemperature = DHT.temperature;
+    dhtHumidity = DHT.humidity;
+    lastdhtAccess = upTime;
+  }
 
   // Illuminance calculation (it is rather inaccurate as, for example, the voltage can fluctuate
 
@@ -88,30 +97,29 @@ void loop() {
   if (lux < 10) {
     strcpy(lightCondition, "pitch black");
   } else if (lux < 50) {
-    strcpy(lightCondition, "very dark");
+    strcpy(lightCondition, "very dark  ");
   } else if (lux < 200) {
-    strcpy(lightCondition, "dark in");
+    strcpy(lightCondition, "dark in    ");
   } else if (lux < 400) {
-    strcpy(lightCondition, "dim in");
+    strcpy(lightCondition, "dim in     ");
   } else if (lux < 1000) {
-    strcpy(lightCondition, "normal in");
+    strcpy(lightCondition, "normal in  ");
   } else if (lux < 5000) {
-    strcpy(lightCondition, "bright in");
+    strcpy(lightCondition, "bright in  ");
   } else if (lux < 10000) {
-    strcpy(lightCondition, "dim out");
+    strcpy(lightCondition, "dim out    ");
   } else if (lux < 30000) {
-    strcpy(lightCondition, "cloudy out");
+    strcpy(lightCondition, "cloudy out ");
   } else {
-    strcpy(lightCondition, "direct sun");
+    strcpy(lightCondition, "direct sun ");
   }
-
 
   // Reads thermistor multiples times for accuracy and calculates the average result
 
   uint8_t i;
   float thermistorAverageReading;
 
-  for (i = 0; i < thermistorSamples; i++) {
+  for (i = 0; i < 5; i++) {
     thermistorSampleReadings[i] = analogRead(thermistorPin);
     delay(10);
   }
@@ -126,34 +134,36 @@ void loop() {
   thermistorAverageReading = ( 1023 / thermistorAverageReading) - 1 ;
   thermistorAverageReading = thermistorSeries / thermistorAverageReading;
 
-  float steinhart;
+  // Steinhart–Hart equation to calculate temperature
 
-  steinhart = thermistorAverageReading / thermistorNominal;     // (R/Ro)
-  steinhart = log(steinhart);                  // ln(R/Ro)
-  steinhart /= bcoefficient;                   // 1/B * ln(R/Ro)
-  steinhart += 1.0 / (temperatureNormal + 273.15); // + (1/To)
-  steinhart = 1.0 / steinhart;                 // Invert
-  steinhart -= 273.15;                         // convert to C
+  float thermistorTemperature;
 
-  // Reads soil moisture (TODO: add relay to minimize damage on sensor from oxidizing when current flows constantly)
+  thermistorTemperature = thermistorAverageReading / thermistorNominal;
+  thermistorTemperature = log(thermistorTemperature);
+  thermistorTemperature /= bCoefficient;
+  thermistorTemperature += 1.0 / (temperatureNormal + 273.15);
+  thermistorTemperature = 1.0 / thermistorTemperature;
+  thermistorTemperature -= 273.15;
+
+  // Reads soil moisture (TODO: add NPN transistor to minimize damage on sensor from oxidizing when current flows constantly)
 
   int moistureReading = analogRead(soilMoisturePin);
 
   // Logs data on SD card
 
-  unsigned long upTime = millis();
+  char thermistorTemperatureFull[6];
 
   if (upTime - lastLogRecordTime > 1000) {
     char logData[40];
 
-    // Float to string coversation (it has rounding error on second digit after the decimal point +/- 1)
+    // Float to string coversation
 
-    int steinhartWhole = steinhart;
-    int steinhartFraction = (steinhart - steinhartWhole) * 100;
-    char steinhartFull[5];
-    sprintf(steinhartFull, "%d.%d", steinhartWhole, steinhartFraction);
+    float thermistorTemperatureFloat = thermistorTemperature * 100;
+    int thermistorTemperatureWhole = (int)thermistorTemperatureFloat / 100;
+    int thermistorTemperatureFraction = (int)thermistorTemperatureFloat % 100;
+    sprintf(thermistorTemperatureFull, "%d.%d", thermistorTemperatureWhole, thermistorTemperatureFraction);
 
-    sprintf(logData, "%lu, %d, %d, %d, %s, %d", logId, dhtTemperature, dhtHumidity, lux, steinhartFull, moistureReading);
+    sprintf(logData, "%lu, %d, %d, %d, %s, %d", logId, dhtTemperature, dhtHumidity, lux, thermistorTemperatureFull, moistureReading);
 
     logFile = SD.open("log.csv", FILE_WRITE);
 
@@ -173,22 +183,15 @@ void loop() {
   switch (rollState) {
     case 1:
       displayDhtReading(dhtStatus, dhtTemperature, dhtHumidity);
-      delay(500);
+      delay(50);
       break;
     case 2:
       displayPhotoresistorReading(lux, lightCondition);
-      delay(500);
+      delay(50);
       break;
     case 3:
-      displayThermistorAndMoistureReading(steinhart, moistureReading);
-      delay(500);
-      break;
-    default:
-      lcd.setCursor(0, 0);
-      lcd.print("Unknown Error   ");
-      lcd.setCursor(0, 1);
-      lcd.print(rollState);
-      delay(500);
+      displayThermistorAndMoistureReading(thermistorTemperatureFull, moistureReading);
+      delay(50);
       break;
   }
 }
@@ -219,61 +222,63 @@ int changeRollSate() {
 // Function that displays DHT temperature and humidity on LCD
 
 void displayDhtReading(int dhtStatus, int dhtTemperature, int dhtHumidity) {
-
   switch (dhtStatus) {
     case DHTLIB_OK:
+      char temperatureLine[19];
+      char humidityLine[19];
+      sprintf(temperatureLine, "Temp1: %d%cC       ", dhtTemperature, 223);
+      sprintf(humidityLine, "Hum: %d%c        ", dhtHumidity, 37);
       lcd.setCursor(0, 0);
-      lcd.print("Temp: ");
-      lcd.print(dhtTemperature);
-      lcd.print(" ");
-      lcd.print((char)223);
-      lcd.print("C      ");
+      lcd.print(temperatureLine);
       lcd.setCursor(0, 1);
-      lcd.print("Hum: ");
-      lcd.print(dhtHumidity);
-      lcd.print(" %       ");
+      lcd.print(humidityLine);
       break;
     case DHTLIB_ERROR_CHECKSUM:
+      sprintf(dhtError, "DHT Checksum Err");
       lcd.setCursor(0, 0);
-      lcd.print("DHT Checksum Err ");
+      lcd.print(dhtError);
       lcd.setCursor(0, 1);
-      lcd.print("                ");
+      lcd.print(clearLCD);
       break;
     case DHTLIB_ERROR_TIMEOUT:
+      sprintf(dhtError, "DHT Timeout Err ");
       lcd.setCursor(0, 0);
-      lcd.print("DHT Timeout Err ");
+      lcd.print(dhtError);
       lcd.setCursor(0, 1);
-      lcd.print("                ");
+      lcd.print(clearLCD);
       break;
     default:
+      sprintf(dhtError, "DHT Unknown Err ");
       lcd.setCursor(0, 0);
-      lcd.print("DHT Unknown Err ");
+      lcd.print(dhtError);
       lcd.setCursor(0, 1);
-      lcd.print("                ");
+      lcd.print(clearLCD);
       break;
   }
 }
 
 // Function that displays illuminance on LCD
 
-void displayPhotoresistorReading (int lux, String lightCondition) {
+void displayPhotoresistorReading (int lux, char* lightCondition) {
+  char lightFirstLine[17];
+  char lightSecondLine[21];
+  sprintf(lightFirstLine, "It's %s", lightCondition);
+  sprintf(lightSecondLine, "%d lx             ", lux);
   lcd.setCursor(0, 0);
-  lcd.print("It's " + lightCondition + "        ");
+  lcd.print(lightFirstLine);
   lcd.setCursor(0, 1);
-  lcd.print("Lux: " + String(lux) + " lx        ");
+  lcd.print(lightSecondLine);
 }
 
 // Function that displays temperature from analogue thermistor and soil moisture sensor
 
-void displayThermistorAndMoistureReading (float steinhart, int moistureReading) {
+void displayThermistorAndMoistureReading (char* thermistorTemperature, int moistureReading) {
+  char thermistorLine[19];
+  char soilMoistureLine[20];
+  sprintf(thermistorLine, "Temp2: %s%cC   ", thermistorTemperature, 223);
+  sprintf(soilMoistureLine, "Soil moist: %d   ", moistureReading);
   lcd.setCursor(0, 0);
-  lcd.print("Therm: ");
-  lcd.print(steinhart);
-  lcd.print(" ");
-  lcd.print((char)223);
-  lcd.print("C  ");
+  lcd.print(thermistorLine);
   lcd.setCursor(0, 1);
-  lcd.print("Soil moist: ");
-  lcd.print(moistureReading);
-  lcd.print("   ");
+  lcd.print(soilMoistureLine);
 }
