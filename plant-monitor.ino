@@ -16,10 +16,10 @@
 
 // Coefficients for calculations
 
-#define thermistorSeries 3950
+#define thermistorSeries 10000
 #define bCoefficient 3950
 #define temperatureNormal 25
-#define thermistorNominal 3950
+#define thermistorNominal 10000
 
 // Global variables
 
@@ -67,7 +67,8 @@ void setup() {
   if (logFile) {
     char headerBreak[12] = " , , , , , ";
     logFile.println(headerBreak);
-    char header[102] = "ID, Temperature (Celsius), Humudity (%), Lighting (lx), Thermistor (Celsius), Soil Moisture";
+    char header[102];
+    sprintf(header, "ID, Temperature (%sC), Humudity (%c), Lighting (lx), Thermistor (%sC), Soil Moisture", "\u00B0", 37, "\u00B0");
     logFile.println(header);
     logFile.close();
   }
@@ -79,7 +80,7 @@ void loop() {
 
   // Reads DHT sensor and stores values in respective variables
 
-  if (upTime - lastDhtAccess > 1000) {
+  if (upTime - lastDhtAccess > 2000) {
     dhtStatus = DHT.read11(dhtPin);
     dhtTemperature = DHT.temperature;
     dhtHumidity = DHT.humidity;
@@ -143,10 +144,11 @@ void loop() {
   }
 
   thermistorAverageReading /= analogueSamples;
-  thermistorAverageReading = ( 1023 / thermistorAverageReading) - 1 ;
-  thermistorAverageReading = thermistorSeries / thermistorAverageReading;
 
   // Steinhart–Hart equation to calculate temperature
+
+  thermistorAverageReading = ( 1023 / thermistorAverageReading) - 1 ;
+  thermistorAverageReading = thermistorSeries / thermistorAverageReading;
 
   float thermistorTemperature;
 
