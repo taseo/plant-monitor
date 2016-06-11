@@ -26,11 +26,12 @@
 int dhtStatus;
 int dhtTemperature;
 int dhtHumidity;
-#define thermistorSamples 5
+#define analogueSamples 5
 volatile int rollState = 1;
-float thermistorSampleReadings[thermistorSamples];
+int photoresistorSampleReadings[analogueSamples];
+float thermistorSampleReadings[analogueSamples];
 unsigned long logId = 1;
-unsigned long lastdhtAccess = 0;
+unsigned long lastDhtAccess = 0;
 unsigned long lastLogRecordTime = 0;
 char clearLCD[17] = "                ";
 char dhtError[17];
@@ -78,17 +79,31 @@ void loop() {
 
   // Reads DHT sensor and stores values in respective variables
 
-  if (upTime - lastdhtAccess > 1000) {
+  if (upTime - lastDhtAccess > 1000) {
     dhtStatus = DHT.read11(dhtPin);
     dhtTemperature = DHT.temperature;
     dhtHumidity = DHT.humidity;
-    lastdhtAccess = upTime;
+    lastDhtAccess = upTime;
   }
 
-  // Illuminance calculation (it is rather inaccurate as, for example, the voltage can fluctuate
+  // Illuminance calculation (it is rather inaccurate as voltage can fluctuate and sensor isn't accurate)
 
-  int photoresistorReading = analogRead(photoresistorPin);
-  float vout = photoresistorReading * 0.00322265625; // 3.3 V / 1024 = 0.00322265625
+  uint8_t i;
+
+  float photoresistorAverageReading = 0;
+
+  for (i = 0; i < analogueSamples; i++) {
+    photoresistorSampleReadings[i] = analogRead(photoresistorPin);
+    delay(10);
+  }
+
+  for (i = 0; i < analogueSamples; i++) {
+    photoresistorAverageReading += photoresistorSampleReadings[i];
+  }
+
+  photoresistorAverageReading /= analogueSamples;
+
+  float vout = photoresistorAverageReading * 0.00322265625; // 3.3 V / 1024 = 0.00322265625
   float luxValue = 500 / (10 * ((3.3 - vout) / vout));
   int lux = (int)round(luxValue);
 
@@ -99,15 +114,15 @@ void loop() {
   } else if (lux < 50) {
     strcpy(lightCondition, "very dark  ");
   } else if (lux < 200) {
-    strcpy(lightCondition, "dark in    ");
+    strcpy(lightCondition, "dark inside");
   } else if (lux < 400) {
-    strcpy(lightCondition, "dim in     ");
+    strcpy(lightCondition, "dim inside ");
   } else if (lux < 1000) {
     strcpy(lightCondition, "normal in  ");
   } else if (lux < 5000) {
     strcpy(lightCondition, "bright in  ");
   } else if (lux < 10000) {
-    strcpy(lightCondition, "dim out    ");
+    strcpy(lightCondition, "dim outside");
   } else if (lux < 30000) {
     strcpy(lightCondition, "cloudy out ");
   } else {
@@ -116,21 +131,18 @@ void loop() {
 
   // Reads thermistor multiples times for accuracy and calculates the average result
 
-  uint8_t i;
-  float thermistorAverageReading;
+  float thermistorAverageReading = 0;
 
-  for (i = 0; i < 5; i++) {
+  for (i = 0; i < analogueSamples; i++) {
     thermistorSampleReadings[i] = analogRead(thermistorPin);
     delay(10);
   }
 
-  thermistorAverageReading = 0;
-  for (i = 0; i < thermistorSamples; i++) {
+  for (i = 0; i < analogueSamples; i++) {
     thermistorAverageReading += thermistorSampleReadings[i];
   }
 
-  thermistorAverageReading /= thermistorSamples;
-
+  thermistorAverageReading /= analogueSamples;
   thermistorAverageReading = ( 1023 / thermistorAverageReading) - 1 ;
   thermistorAverageReading = thermistorSeries / thermistorAverageReading;
 
@@ -183,15 +195,15 @@ void loop() {
   switch (rollState) {
     case 1:
       displayDhtReading(dhtStatus, dhtTemperature, dhtHumidity);
-      delay(50);
+      delay(500);
       break;
     case 2:
       displayPhotoresistorReading(lux, lightCondition);
-      delay(50);
+      delay(500);
       break;
     case 3:
       displayThermistorAndMoistureReading(thermistorTemperatureFull, moistureReading);
-      delay(50);
+      delay(500);
       break;
   }
 }
