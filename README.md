@@ -26,5 +26,5 @@ CD4050BE hex non-inverting buffer/converter | x1
 
 1. Add project schematic to repository
 2. Add project image(s) to repository
-3. Add NPN transistor to soil moisture sensor (to minimize damage from oxidation)
+3. Add external clock to log sensors more accurately
 4. Add ability to read data via bluetooth connection
