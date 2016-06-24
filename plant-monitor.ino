@@ -9,6 +9,7 @@
 #define csPin 4
 #define dhtPin 5
 #define interruptPin 7
+#define soilMositureTransistorPin 8
 #define errorPin 13
 #define photoresistorPin A0
 #define thermistorPin A1
@@ -26,15 +27,20 @@
 int dhtStatus;
 int dhtTemperature;
 int dhtHumidity;
+
 #define analogueSamples 5
+
 volatile int rollState = 1;
-int photoresistorSampleReadings[analogueSamples];
-float thermistorSampleReadings[analogueSamples];
+
 unsigned long logId = 1;
 unsigned long lastDhtAccess = 0;
+unsigned long lastSoilMositureAccess = 0;
 unsigned long lastLogRecordTime = 0;
+
 char clearLCD[17] = "                ";
 char dhtError[17];
+
+float soilMoistureAverageReading;
 
 // Objects
 
@@ -44,6 +50,7 @@ File logFile;
 
 void setup() {
   pinMode(interruptPin, INPUT);
+  pinMode(soilMositureTransistorPin, OUTPUT);
   pinMode(csPin, OUTPUT);
   pinMode(errorPin, OUTPUT);
 
@@ -53,14 +60,16 @@ void setup() {
 
   lcd.begin(16, 2);
 
-  // SD Card initialization
+  readSensorsOnStartup();
+
+  // SD card initialization
 
   if (!SD.begin(csPin)) {
     digitalWrite(errorPin, HIGH);
     return;
   }
 
-  // Header for Log file
+  // Header for log file
 
   logFile = SD.open ("log.csv", FILE_WRITE);
 
@@ -72,6 +81,18 @@ void setup() {
     logFile.println(header);
     logFile.close();
   }
+}
+
+// Reads DHT Tempereature/Humidity and Soil Moisture on startup
+
+void readSensorsOnStartup() {
+  dhtStatus = DHT.read11(dhtPin);
+  dhtTemperature = DHT.temperature;
+  dhtHumidity = DHT.humidity;
+  digitalWrite(soilMositureTransistorPin, HIGH);
+  delay(20);
+  soilMoistureAverageReading = readSensor(soilMoisturePin);
+  digitalWrite(soilMositureTransistorPin, LOW);
 }
 
 void loop() {
@@ -89,24 +110,10 @@ void loop() {
 
   // Illuminance calculation (it is rather inaccurate as voltage can fluctuate and sensor isn't accurate)
 
-  uint8_t i;
-
-  float photoresistorAverageReading = 0;
-
-  for (i = 0; i < analogueSamples; i++) {
-    photoresistorSampleReadings[i] = analogRead(photoresistorPin);
-    delay(10);
-  }
-
-  for (i = 0; i < analogueSamples; i++) {
-    photoresistorAverageReading += photoresistorSampleReadings[i];
-  }
-
-  photoresistorAverageReading /= analogueSamples;
-
-  float vout = photoresistorAverageReading * 0.00322265625; // 3.3 V / 1024 = 0.00322265625
-  float luxValue = 500 / (10 * ((3.3 - vout) / vout));
-  int lux = (int)round(luxValue);
+  float photoresistorAverageReading = readSensor(photoresistorPin);
+  photoresistorAverageReading = photoresistorAverageReading * 0.00322265625; // 3.3 V / 1024 = 0.00322265625
+  photoresistorAverageReading = 500 / (10 * ((3.3 - photoresistorAverageReading) / photoresistorAverageReading));
+  int lux = (int)round(photoresistorAverageReading);
 
   char lightCondition[12] = "";
 
@@ -130,20 +137,9 @@ void loop() {
     strcpy(lightCondition, "direct sun ");
   }
 
-  // Reads thermistor multiples times for accuracy and calculates the average result
+  // Reads thermistor multiple times for accuracy and calculates the average result
 
-  float thermistorAverageReading = 0;
-
-  for (i = 0; i < analogueSamples; i++) {
-    thermistorSampleReadings[i] = analogRead(thermistorPin);
-    delay(10);
-  }
-
-  for (i = 0; i < analogueSamples; i++) {
-    thermistorAverageReading += thermistorSampleReadings[i];
-  }
-
-  thermistorAverageReading /= analogueSamples;
+  float thermistorAverageReading = readSensor(thermistorPin);
 
   // Steinhart–Hart equation to calculate temperature
 
@@ -159,25 +155,28 @@ void loop() {
   thermistorTemperature = 1.0 / thermistorTemperature;
   thermistorTemperature -= 273.15;
 
-  // Reads soil moisture (TODO: add NPN transistor to minimize damage on sensor from oxidizing when current flows constantly)
+  // Thermistor reading from Float to String
 
-  int moistureReading = analogRead(soilMoisturePin);
+  char thermistorStringValue[6];
+  int whole = (int)thermistorTemperature;
+  int fraction = (int)(thermistorTemperature * 100) % 100;
+  sprintf(thermistorStringValue, "%d.%d", whole, fraction);
+
+  // Reads soil moisture once in 15 minutes multiple times for accuracy and calculates the average result
+
+  if (upTime - lastSoilMositureAccess > 900000) {
+    digitalWrite(soilMositureTransistorPin, HIGH);
+    delay(20);
+    soilMoistureAverageReading = readSensor(soilMoisturePin);
+    digitalWrite(soilMositureTransistorPin, LOW);
+    lastSoilMositureAccess = upTime;
+  }
 
   // Logs data on SD card
 
-  char thermistorTemperatureFull[6];
-
   if (upTime - lastLogRecordTime > 1000) {
     char logData[40];
-
-    // Float to string coversation
-
-    float thermistorTemperatureFloat = thermistorTemperature * 100;
-    int thermistorTemperatureWhole = (int)thermistorTemperatureFloat / 100;
-    int thermistorTemperatureFraction = (int)thermistorTemperatureFloat % 100;
-    sprintf(thermistorTemperatureFull, "%d.%d", thermistorTemperatureWhole, thermistorTemperatureFraction);
-
-    sprintf(logData, "%lu, %d, %d, %d, %s, %d", logId, dhtTemperature, dhtHumidity, lux, thermistorTemperatureFull, moistureReading);
+    sprintf(logData, "%lu, %d, %d, %d, %s, %d", logId, dhtTemperature, dhtHumidity, lux, thermistorStringValue, (int)soilMoistureAverageReading);
 
     logFile = SD.open("log.csv", FILE_WRITE);
 
@@ -204,7 +203,7 @@ void loop() {
       delay(500);
       break;
     case 3:
-      displayThermistorAndMoistureReading(thermistorTemperatureFull, moistureReading);
+      displayThermistorAndMoistureReading(thermistorStringValue, soilMoistureAverageReading);
       delay(500);
       break;
   }
@@ -295,4 +294,23 @@ void displayThermistorAndMoistureReading (char* thermistorTemperature, int moist
   lcd.print(thermistorLine);
   lcd.setCursor(0, 1);
   lcd.print(soilMoistureLine);
+}
+
+// Function that reads sensor xx times and reutrns the average value
+
+float readSensor(int sensorPin) {
+  uint8_t i;
+  float averageSensorReading = 0;
+  float sensorSampleReadings[analogueSamples];
+
+  for (i = 0; i < analogueSamples; i++) {
+    sensorSampleReadings[i] = analogRead(sensorPin);
+    delay(10);
+  }
+
+  for (i = 0; i < analogueSamples; i++) {
+    averageSensorReading += sensorSampleReadings[i];
+  }
+
+  return averageSensorReading /= analogueSamples;
 }
