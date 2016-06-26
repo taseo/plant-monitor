@@ -1,6 +1,8 @@
 # plant-monitor
 Arduino Leonardo based plant health monitor that reads temperature, humidity, lightning and soil moisture. All sensor readings are displayed on LCD and logged to micro SD card.
 
+![Image of Plant Monitor](https://github.com/taseo/plant-monitor/blob/master/plant_monitor.jpg)
+
 ### Parts list
 
 Part | Quantity
@@ -25,6 +27,5 @@ CD4050BE hex non-inverting buffer/converter | x1
 ### To Do!
 
 1. Add project schematic to repository
-2. Add project image(s) to repository
-3. Add external clock to log sensors more accurately
-4. Add ability to read data via bluetooth connection
+2. Add external clock to log sensors more accurately
+3. Add ability to read data via bluetooth connection
