@@ -174,7 +174,7 @@ void loop() {
 
   // Logs data on SD card
 
-  if (upTime - lastLogRecordTime > 1000) {
+  if (upTime - lastLogRecordTime > 60000) {
     char logData[40];
     sprintf(logData, "%lu, %d, %d, %d, %s, %d", logId, dhtTemperature, dhtHumidity, lux, thermistorStringValue, (int)soilMoistureAverageReading);
 
